@@ -1,0 +1,44 @@
+{
+  "info": [
+    "This file ....."
+  ],
+  "nodes": [
+    {
+      "id": 0
+    },
+    {
+      "id": 1
+    },
+    {
+      "id": 2
+    },
+    {
+      "id": 3
+    },
+    {
+      "id": 4
+    }
+  ],
+  "edges": [
+    {
+      "node_1": 1,
+      "node_2": 0,
+      "capacity": 10000
+    },
+    {
+      "node_1": 1,
+      "node_2": 2,
+      "capacity": 20000
+    },
+    {
+      "node_1": 2,
+      "node_2": 3,
+      "capacity": 30000
+    },
+    {
+      "node_1": 3,
+      "node_2": 4,
+      "capacity": 40000
+    }
+  ]
+}

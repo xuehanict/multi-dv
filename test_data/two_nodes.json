@@ -1,0 +1,20 @@
+{
+  "info": [
+    "two nodes"
+  ],
+  "nodes": [
+    {
+      "id": 1
+    },
+    {
+      "id": 2
+    }
+  ],
+  "edges": [
+    {
+      "node_1": 1,
+      "node_2": 2,
+      "capacity": 100
+    }
+  ]
+}
