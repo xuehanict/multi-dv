@@ -24,6 +24,8 @@ type MultPathRouter struct {
 	LinkBase    map[string]*Link
 	RouterBase  map[RouterID]*MultPathRouter
 	MessagePool chan *Probe
+	RequestPool chan *Request
+	ResponsePool chan *Response
 	timer       *time.Ticker
 	wg          sync.WaitGroup
 	quit        chan struct{}
@@ -46,6 +48,18 @@ type Probe struct {
 	dest     RouterID
 	upper    RouterID
 	distance Distance
+}
+
+type Request struct {
+	RequestID int64
+	Destination RouterID
+
+}
+
+type Response struct {
+	RequestID int64
+	Route []RouterID
+	Success bool
 }
 
 func (r *MultPathRouter) start() {
@@ -250,3 +264,20 @@ func addLink(r1, r2 RouterID, capacity int64, nodeBase map[RouterID]*MultPathRou
 	nodeBase[r2].Neighbours = append(nodeBase[r2].Neighbours, r1)
 	return nil
 }
+
+func (r *MultPathRouter) sendRequest ()  {
+	
+}
+
+func (r *MultPathRouter) handleRequest () {
+
+}
+
+func (r *MultPathRouter) handleResponse ()  {
+
+}
+
+
+
+
+
