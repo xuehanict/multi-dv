@@ -2,13 +2,16 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
-	"os"
 )
 
-const BufferSize = 1000
-const SendCycle = 1
+const (
+	BufferSize   = 1000
+	ProbeCycle   = 5
+	UpdateWindow = 1
+)
 
 type RouterID int
 type Distance int
@@ -74,7 +77,7 @@ func (r *MultPathRouter) start() {
 	}
 }
 
-func (r *MultPathRouter) Stop ()  {
+func (r *MultPathRouter) Stop() {
 	close(r.quit)
 	r.wg.Wait()
 }
@@ -99,15 +102,15 @@ func (r *MultPathRouter) handleProbe(p *Probe) {
 		r.RouterTable[p.dest][p.upper] = p.distance + 1
 
 		r.UpdateTable[p.dest] = &updateEntry{
-			updated: false,
+			updated:    false,
 			updateTime: time.Now().Unix(),
-			bestHop: p.upper,
-			minDis: p.distance + 1,
+			bestHop:    p.upper,
+			minDis:     p.distance + 1,
 		}
 		for _, neighbor := range r.Neighbours {
 			probe := &Probe{
-				dest:    p.dest,
-				upper:   r.ID,
+				dest:     p.dest,
+				upper:    r.ID,
 				distance: p.distance + 1,
 			}
 			err := r.sendProbeToRouter(neighbor, probe)
@@ -118,17 +121,75 @@ func (r *MultPathRouter) handleProbe(p *Probe) {
 			}
 		}
 	} else {
-		mapNextHop[p.upper] = p.distance + 1
-		if p.distance + 1 < r.UpdateTable[p.dest].minDis {
-			r.UpdateTable[p.dest] = &updateEntry{
-				updated: false,
-				updateTime: time.Now().Unix(),
-				bestHop: p.upper,
-				minDis: p.distance + 1,
+		// 最优的hop发来的probe，更新
+		if p.upper == r.UpdateTable[p.dest].bestHop {
+			mapNextHop[p.upper] = p.distance + 1
+			// 比最小的还小，那么肯定还是最优解
+			if p.distance+1 < r.UpdateTable[p.dest].minDis {
+				r.UpdateTable[p.dest] = &updateEntry{
+					updated:    true,
+					updateTime: time.Now().Unix(),
+					bestHop:    p.upper,
+					minDis:     p.distance + 1,
+				}
+
+				// 否则遍历，找到最小的, 并且修改updateTable
+			} else {
+
+				newMinDistance := r.UpdateTable[p.dest].minDis
+				newBestHop := r.UpdateTable[p.dest].bestHop
+				for upper, distance := range mapNextHop {
+					if distance < newMinDistance {
+						newMinDistance = distance
+						newBestHop = upper
+					}
+				}
+				r.UpdateTable[p.dest] = &updateEntry{
+					updated:    true,
+					updateTime: time.Now().Unix(),
+					bestHop:    newBestHop,
+					minDis:     newMinDistance,
+				}
+			}
+			// 非最优的hop发来的probe
+		} else {
+			newMinDistance := r.UpdateTable[p.dest].minDis
+			newBestHop := r.UpdateTable[p.dest].bestHop
+			bestChanged := false
+			for upper, distance := range mapNextHop {
+				if distance < newMinDistance {
+					newMinDistance = distance
+					newBestHop = upper
+					bestChanged = true
+				}
+			}
+			if bestChanged {
+				r.UpdateTable[p.dest] = &updateEntry{
+					updated:    true,
+					updateTime: time.Now().Unix(),
+					bestHop:    newBestHop,
+					minDis:     newMinDistance,
+				}
+			}
+		}
+
+		timeDiff := time.Now().Unix() - r.UpdateTable[p.dest].updateTime
+		if timeDiff >= UpdateWindow && r.UpdateTable[p.dest].updated {
+			for _, neighbor := range r.Neighbours {
+				probe := &Probe{
+					dest:     p.dest,
+					upper:    r.ID,
+					distance: r.UpdateTable[p.dest].minDis,
+				}
+				err := r.sendProbeToRouter(neighbor, probe)
+				if err != nil {
+					os.Exit(1)
+					fmt.Printf("router %v handle probe"+
+						" %v failed : %v", r.ID, p, err)
+				}
 			}
 		}
 	}
-
 }
 
 func (r *MultPathRouter) sendProbeToRouter(id RouterID, probe *Probe) error {
@@ -147,7 +208,7 @@ func newRouter(id RouterID) *MultPathRouter {
 		Neighbours:  make([]RouterID, 0),
 		UpdateTable: make(map[RouterID]*updateEntry),
 		MessagePool: make(chan *Probe, BufferSize),
-		timer:       time.NewTicker(SendCycle * time.Second),
+		timer:       time.NewTicker(ProbeCycle * time.Second),
 		wg:          sync.WaitGroup{},
 		quit:        make(chan struct{}),
 	}
