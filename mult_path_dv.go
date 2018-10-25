@@ -10,7 +10,7 @@ import (
 
 const (
 	BufferSize   = 1000
-	ProbeCycle   = 5
+	ProbeCycle   = 3
 	UpdateWindow = 1
 )
 
@@ -27,6 +27,7 @@ type MultPathRouter struct {
 	MessagePool  chan *Probe
 	RequestPool  chan *Request
 	ResponsePool chan *Response
+	HoldRequests map[uint64]chan *Response
 	timer        *time.Ticker
 	wg           sync.WaitGroup
 	quit         chan struct{}
@@ -52,15 +53,16 @@ type Probe struct {
 }
 
 type Request struct {
-	RequestID   int64
+	RequestID   uint64
 	Destination RouterID
 	PathNodes   []RouterID
 }
 
 type Response struct {
-	RequestID int64
+	RequestID uint64
 	Route     []RouterID
 	Success   bool
+	Reason	  string
 }
 
 func (r *MultPathRouter) start() {
@@ -70,7 +72,11 @@ func (r *MultPathRouter) start() {
 		select {
 		case probe := <-r.MessagePool:
 			r.handleProbe(probe)
-		case r.timer.C:
+		case request := <- r.RequestPool:
+			r.handleRequest(request)
+		case response := <- r.ResponsePool:
+			r.handleResponse(response)
+		case <- r.timer.C:
 			for _, neighbor := range r.Neighbours {
 				link := r.getLink(neighbor)
 				if link == nil {
@@ -110,7 +116,11 @@ func (r *MultPathRouter) handleProbe(p *Probe) {
 	if p.dest == r.ID {
 		return
 	}
-
+	/*
+	if r.ID == 10 {
+		fmt.Printf("probe :%v \n", p)
+	}
+	*/
 	mapNextHop, ok := r.RouterTable[p.dest]
 	if !ok {
 		r.RouterTable[p.dest] = make(map[RouterID]Distance)
@@ -136,17 +146,14 @@ func (r *MultPathRouter) handleProbe(p *Probe) {
 			}
 		}
 	} else {
+		mapNextHop[p.upper] = p.distance + 1
 		// 最优的hop发来的probe，更新
 		if p.upper == r.UpdateTable[p.dest].bestHop {
-			mapNextHop[p.upper] = p.distance + 1
 			// 比最小的还小，那么肯定还是最优解
 			if p.distance+1 < r.UpdateTable[p.dest].minDis {
-				r.UpdateTable[p.dest] = &updateEntry{
-					updated:    true,
-					updateTime: time.Now().Unix(),
-					bestHop:    p.upper,
-					minDis:     p.distance + 1,
-				}
+				r.UpdateTable[p.dest].updated = true
+				r.UpdateTable[p.dest].bestHop = p.upper
+				r.UpdateTable[p.dest].minDis  = p.distance + 1
 
 				// 否则遍历，找到最小的, 并且修改updateTable
 			} else {
@@ -159,12 +166,9 @@ func (r *MultPathRouter) handleProbe(p *Probe) {
 						newBestHop = upper
 					}
 				}
-				r.UpdateTable[p.dest] = &updateEntry{
-					updated:    true,
-					updateTime: time.Now().Unix(),
-					bestHop:    newBestHop,
-					minDis:     newMinDistance,
-				}
+				r.UpdateTable[p.dest].updated = true
+				r.UpdateTable[p.dest].bestHop = newBestHop
+				r.UpdateTable[p.dest].minDis  = newMinDistance
 			}
 			// 非最优的hop发来的probe
 		} else {
@@ -179,12 +183,9 @@ func (r *MultPathRouter) handleProbe(p *Probe) {
 				}
 			}
 			if bestChanged {
-				r.UpdateTable[p.dest] = &updateEntry{
-					updated:    true,
-					updateTime: time.Now().Unix(),
-					bestHop:    newBestHop,
-					minDis:     newMinDistance,
-				}
+				r.UpdateTable[p.dest].updated = true
+				r.UpdateTable[p.dest].bestHop = newBestHop
+				r.UpdateTable[p.dest].minDis  = newMinDistance
 			}
 		}
 
@@ -196,7 +197,14 @@ func (r *MultPathRouter) handleProbe(p *Probe) {
 					upper:    r.ID,
 					distance: r.UpdateTable[p.dest].minDis,
 				}
+				/*
+				if r.ID == 10 {
+					fmt.Printf("send update probe")
+				}
+				*/
 				err := r.sendMessageToRouter(neighbor, probe)
+				r.UpdateTable[p.dest].updated = false
+				r.UpdateTable[p.dest].updateTime = time.Now().Unix()
 				if err != nil {
 					os.Exit(1)
 					fmt.Printf("router %v handle probe"+
@@ -230,6 +238,9 @@ func newRouter(id RouterID) *MultPathRouter {
 		Neighbours:  make([]RouterID, 0),
 		UpdateTable: make(map[RouterID]*updateEntry),
 		MessagePool: make(chan *Probe, BufferSize),
+		RequestPool: make(chan *Request, BufferSize),
+		ResponsePool:make(chan *Response, BufferSize),
+		HoldRequests:make(map[uint64]chan *Response),
 		timer:       time.NewTicker(ProbeCycle * time.Second),
 		wg:          sync.WaitGroup{},
 		quit:        make(chan struct{}),
@@ -274,34 +285,38 @@ func addLink(r1, r2 RouterID, capacity int64, nodeBase map[RouterID]*MultPathRou
 }
 
 // 目前实现的是单路径的
-func (r *MultPathRouter) sendRequest(dest RouterID) error {
+func (r *MultPathRouter) sendRequest(dest RouterID) (*Request,error) {
 	entry, ok := r.UpdateTable[dest]
 	if ok {
 		req := &Request{
-			RequestID:   rand.Int63(),
+			RequestID:   rand.Uint64(),
 			Destination: dest,
 			PathNodes:   append(make([]RouterID, 0), r.ID),
 		}
 		r.sendMessageToRouter(entry.bestHop, req)
-		return nil
+		return req, nil
 	} else {
-		return fmt.Errorf("cann't find the path")
+		return nil, fmt.Errorf("cann't find the path")
 	}
 }
 
 func (r *MultPathRouter) handleRequest(request *Request) {
-	for index, node := range request.PathNodes {
+	// 先判断是否有回路，如果有回路，直接丢弃这个request
+	for _, node := range request.PathNodes {
 		if node == r.ID {
+			/*
 			res := &Response{
 				RequestID: request.RequestID,
 				Success:   false,
 				Route:     request.PathNodes,
 			}
 			r.sendMessageToRouter(request.PathNodes[index-1], res)
+			*/
 			return
 		}
 	}
 
+	// 如果我们就是目的地，则直接创建response，返回给上一跳节点
 	if request.Destination == r.ID {
 		res := &Response{
 			RequestID: request.RequestID,
@@ -310,6 +325,9 @@ func (r *MultPathRouter) handleRequest(request *Request) {
 		}
 		r.sendMessageToRouter(request.PathNodes[len(request.PathNodes)-1], res)
 	} else {
+
+		// 不是目的节点，则分两种情况：1. 在路由表中找到，将request传给下一跳；
+		// 2. 未在路由表中找到，返回一个失败的response给上一跳
 		entry, ok := r.UpdateTable[request.Destination]
 		if ok {
 			req := &Request{
@@ -323,28 +341,72 @@ func (r *MultPathRouter) handleRequest(request *Request) {
 				RequestID: request.RequestID,
 				Success:   false,
 				Route:     append(request.PathNodes, r.ID),
+				Reason:	   string(r.ID) + "cann't find the destination in routing table",
 			}
 			r.sendMessageToRouter(request.PathNodes[len(request.PathNodes)-1], res)
-
 		}
 	}
 }
 
 func (r *MultPathRouter) handleResponse(response *Response) (
-	[]RouterID, error) {
+	 error) {
 	if response.Route[0] == r.ID {
 		if response.Success {
-			return response.Route, nil
+			r.HoldRequests[response.RequestID] <- response
+			return nil
 		} else {
-			return nil, fmt.Errorf("can not find the path")
+			return fmt.Errorf("can not find the path")
 		}
 	} else {
 		for i, node := range response.Route {
 			if node == r.ID {
 				r.sendMessageToRouter(response.Route[i-1], response)
-				return nil, nil
+				return  nil
 			}
 		}
 	}
-	return nil, nil
+	return nil
+}
+
+func (r *MultPathRouter) FindPath (dest RouterID) ([]RouterID, error) {
+
+	entry, ok := r.UpdateTable[dest]
+	if ok {
+		req := &Request{
+			RequestID:   rand.Uint64(),
+			Destination: dest,
+			PathNodes:   append(make([]RouterID, 0), r.ID),
+		}
+		r.HoldRequests[req.RequestID] = make(chan *Response)
+		r.sendMessageToRouter(entry.bestHop, req)
+
+		select {
+		case response := <- r.HoldRequests[req.RequestID]:
+			delete(r.HoldRequests, req.RequestID)
+			return response.Route, nil
+		case <- time.After(2 * time.Second):
+			delete(r.HoldRequests, req.RequestID)
+			return nil, fmt.Errorf("the result of the response is failed")
+		}
+	} else {
+		return nil, fmt.Errorf("cann't find the dest in the routing table")
+	}
+}
+
+func (r *MultPathRouter) PrintBestTable () {
+	fmt.Printf("-----router: %v 's best table---------\n", r.ID)
+	for key, entry := range r.UpdateTable {
+		fmt.Printf("dest: %v  nextHop :%v distance: %v \n",
+			key, entry.bestHop, entry.minDis)
+	}
+}
+
+func (r *MultPathRouter) PrintTable () {
+	fmt.Printf("-----router: %v 's full table---------\n", r.ID)
+	for dest, sonTable := range r.RouterTable {
+		fmt.Printf("for dest -%v \n", dest)
+		for neighbour, entry := range sonTable {
+			fmt.Printf("    neighbour :%v  distance %v \n", neighbour, entry)
+		}
+	}
 }

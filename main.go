@@ -6,12 +6,13 @@ import (
 	"os"
 	"encoding/json"
 	"time"
+	"bufio"
 )
 
 const (
 	twoNodesGraphFile = "testdata/two_nodes.json"
 
-	basicGraphFilePath = "testdata/basic_graph.json"
+	basicGraphFile = "testdata/basic_graph.json"
 
 	tenNodesGraphFile = "testdata/ten_nodes.json"
 )
@@ -50,7 +51,7 @@ func main() {
 	}
 
 	for _, router := range nodes {
-		router.start()
+		go router.start()
 		time.Sleep(1 * time.Second)
 	}
 	/*
@@ -61,10 +62,25 @@ func main() {
 	}()
 	for {
 		for _, router := range nodes {
-			router.printBestHopTable()
+			//router.PrintBestTable()
+			router.PrintTable()
 		}
 		time.Sleep(3 * time.Second)
 	}
-	fmt.Printf("%v\n", g)
 */
+	time.Sleep(30 * time.Second)
+	f := bufio.NewReader(os.Stdin)
+	var origion, end RouterID
+	for{
+		fmt.Printf("-----find way-------\n")
+		fmt.Print("Please input the origin node ID: ")
+		input, _ := f.ReadString('\n')
+		fmt.Sscanf(input, "%d", &origion)
+		fmt.Printf("Please input the end node ID:")
+		input, _ = f.ReadString('\n')
+		fmt.Sscanf(input,"%d", &end)
+
+		route,_ := nodes[origion].FindPath(end)
+		fmt.Printf("route is : %v\n", route)
+	}
 }
