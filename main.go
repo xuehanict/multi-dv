@@ -6,6 +6,7 @@ import (
 	"os"
 	"encoding/json"
 	"time"
+	//"bufio"
 	"bufio"
 )
 
@@ -60,6 +61,7 @@ func main() {
 		time.Sleep(20 * time.Second)
 		modify.capacity = 3333
 	}()
+
 	for {
 		for _, router := range nodes {
 			//router.PrintBestTable()
@@ -68,7 +70,7 @@ func main() {
 		time.Sleep(3 * time.Second)
 	}
 */
-	time.Sleep(30 * time.Second)
+	time.Sleep(10 * time.Second)
 	f := bufio.NewReader(os.Stdin)
 	var origion, end RouterID
 	for{
@@ -83,4 +85,5 @@ func main() {
 		route,_ := nodes[origion].FindPath(end)
 		fmt.Printf("route is : %v\n", route)
 	}
+
 }

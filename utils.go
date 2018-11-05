@@ -6,6 +6,15 @@ func newLinkKey(r1, r2 RouterID) string {
 	return strconv.Itoa(int(r1)) + "-" + strconv.Itoa(int(r2))
 }
 
+func copyMap(m map[RouterID]Distance)  map[RouterID]Distance{
+	resultMap := make(map[RouterID]Distance)
+	for key, value := range m {
+		resultMap[key] = value
+	}
+	return resultMap
+}
+
+
 type testGraph struct {
 	Info  []string   `json:"info"`
 	Nodes []testNode `json:"nodes"`
